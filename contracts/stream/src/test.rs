@@ -1308,6 +1308,50 @@ fn test_create_stream_sender_is_recipient_panics() {
     );
 }
 
+/// Self-streaming must not persist state, move tokens, or emit events.
+#[test]
+fn test_create_stream_sender_equals_recipient_has_no_side_effects() {
+    let ctx = TestContext::setup();
+    ctx.env.ledger().set_timestamp(0);
+
+    let stream_count_before = ctx.client().get_stream_count();
+    let sender_balance_before = ctx.token().balance(&ctx.sender);
+    let contract_balance_before = ctx.token().balance(&ctx.contract_id);
+    let events_before = ctx.env.events().all().len();
+
+    let result = ctx.client().try_create_stream(
+        &ctx.sender,
+        &ctx.sender, // invalid: same address
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
+    );
+
+    assert!(result.is_err(), "self-streaming must be rejected");
+    assert_eq!(
+        ctx.client().get_stream_count(),
+        stream_count_before,
+        "stream counter must not advance on validation failure"
+    );
+    assert_eq!(
+        ctx.token().balance(&ctx.sender),
+        sender_balance_before,
+        "sender balance must not change on validation failure"
+    );
+    assert_eq!(
+        ctx.token().balance(&ctx.contract_id),
+        contract_balance_before,
+        "contract balance must not change on validation failure"
+    );
+    assert_eq!(
+        ctx.env.events().all().len(),
+        events_before,
+        "no events should be emitted on validation failure"
+    );
+}
+
 /// different sender and recipient is valid (sanity check)
 #[test]
 fn test_create_stream_different_sender_recipient_valid() {
@@ -7235,6 +7279,54 @@ fn test_create_streams_batch_sender_recipient_panic() {
 
     let streams = vec![&ctx.env, params];
     ctx.client().create_streams(&ctx.sender, &streams);
+}
+
+#[test]
+fn test_create_streams_batch_sender_recipient_has_no_side_effects() {
+    let ctx = TestContext::setup();
+    ctx.env.ledger().set_timestamp(0);
+
+    let params = CreateStreamParams {
+        recipient: ctx.sender.clone(), // invalid: recipient == sender
+        deposit_amount: 1000,
+        rate_per_second: 1,
+        start_time: 0,
+        cliff_time: 0,
+        end_time: 1000,
+    };
+
+    let streams = vec![&ctx.env, params];
+
+    let stream_count_before = ctx.client().get_stream_count();
+    let sender_balance_before = ctx.token().balance(&ctx.sender);
+    let contract_balance_before = ctx.token().balance(&ctx.contract_id);
+    let events_before = ctx.env.events().all().len();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ctx.client().create_streams(&ctx.sender, &streams);
+    }));
+
+    assert!(result.is_err(), "self-streaming in batch must be rejected");
+    assert_eq!(
+        ctx.client().get_stream_count(),
+        stream_count_before,
+        "batch failure must not advance stream counter"
+    );
+    assert_eq!(
+        ctx.token().balance(&ctx.sender),
+        sender_balance_before,
+        "sender balance must not change on validation failure"
+    );
+    assert_eq!(
+        ctx.token().balance(&ctx.contract_id),
+        contract_balance_before,
+        "contract balance must not change on validation failure"
+    );
+    assert_eq!(
+        ctx.env.events().all().len(),
+        events_before,
+        "no events should be emitted on validation failure"
+    );
 }
 
 #[test]

@@ -574,6 +574,9 @@ impl FluxoraStream {
     /// - Publishes `created(stream_id, deposit_amount)` event on success
     ///
     /// # Usage Notes
+    /// - Self-streaming is disallowed: `sender` must be different from `recipient`
+    ///   - Violations panic with `"sender and recipient must be different"`
+    ///   - No state is persisted, no tokens move, and no `created` event is emitted
     /// - Transaction is atomic: if token transfer fails, no stream is created
     /// - Stream IDs are sequential starting from 0
     /// - Cliff time enables vesting schedules (no withdrawals before cliff)
@@ -659,6 +662,10 @@ impl FluxoraStream {
     ///
     /// # Authorization
     /// - Requires authorization from the sender address exactly once for the entire batch.
+    ///
+    /// # Usage Notes
+    /// - Each entry is validated with the same rules as `create_stream`
+    /// - Self-streaming is disallowed per entry: `sender` must not equal `recipient`
     pub fn create_streams(
         env: Env,
         sender: Address,
