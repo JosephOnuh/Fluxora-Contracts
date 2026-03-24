@@ -9475,5 +9475,8 @@ fn test_resume_stream_not_found_returns_error() {
 fn test_resume_stream_as_admin_not_found_returns_error() {
     let ctx = TestContext::setup();
     let result = ctx.client().try_resume_stream_as_admin(&9999);
-    assert!(result.is_err(), "resume_stream_as_admin on unknown id must error");
+    assert!(
+        result.is_err(),
+        "resume_stream_as_admin on unknown id must error"
+    );
 }
