@@ -8551,3 +8551,71 @@ fn test_recipient_stream_index_multiple_senders() {
     assert_eq!(streams.get(1).unwrap(), id2);
     assert_eq!(streams.get(2).unwrap(), id3);
 }
+
+// ---------------------------------------------------------------------------
+// Tests — Recipient Index Insertion & Removal Edge Cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_recipient_index_binary_search_edge_cases() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, crate::FluxoraStream);
+    let recipient = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        // Initial empty state
+        let streams = crate::load_recipient_streams(&env, &recipient);
+        assert_eq!(streams.len(), 0);
+
+        // Add elements out of order to ensure binary search insertions happen correctly
+        crate::add_stream_to_recipient_index(&env, &recipient, 10);
+        crate::add_stream_to_recipient_index(&env, &recipient, 5);
+        crate::add_stream_to_recipient_index(&env, &recipient, 15);
+        crate::add_stream_to_recipient_index(&env, &recipient, 1);
+
+        // Verify ordering
+        let streams1 = crate::load_recipient_streams(&env, &recipient);
+        assert_eq!(streams1.len(), 4);
+        assert_eq!(streams1.get(0).unwrap(), 1);
+        assert_eq!(streams1.get(1).unwrap(), 5);
+        assert_eq!(streams1.get(2).unwrap(), 10);
+        assert_eq!(streams1.get(3).unwrap(), 15);
+
+        // Test duplicate insertion (handles Ok(pos) branch)
+        crate::add_stream_to_recipient_index(&env, &recipient, 10);
+        let streams2 = crate::load_recipient_streams(&env, &recipient);
+        assert_eq!(streams2.len(), 5);
+        assert_eq!(streams2.get(2).unwrap(), 10);
+        assert_eq!(streams2.get(3).unwrap(), 10);
+
+        // Test removal of middle element
+        crate::remove_stream_from_recipient_index(&env, &recipient, 5);
+        let streams3 = crate::load_recipient_streams(&env, &recipient);
+        assert_eq!(streams3.len(), 4);
+        assert_eq!(streams3.get(1).unwrap(), 10);
+
+        // Test removal of duplicate (should remove one instance)
+        crate::remove_stream_from_recipient_index(&env, &recipient, 10);
+        let streams4 = crate::load_recipient_streams(&env, &recipient);
+        assert_eq!(streams4.len(), 3);
+        assert_eq!(streams4.get(1).unwrap(), 10); // one 10 remains
+
+        // Test removal of non-existent element
+        crate::remove_stream_from_recipient_index(&env, &recipient, 100);
+        let streams5 = crate::load_recipient_streams(&env, &recipient);
+        assert_eq!(streams5.len(), 3);
+
+        // Test removal from end
+        crate::remove_stream_from_recipient_index(&env, &recipient, 15);
+        let streams6 = crate::load_recipient_streams(&env, &recipient);
+        assert_eq!(streams6.len(), 2);
+        assert_eq!(streams6.get(0).unwrap(), 1);
+        assert_eq!(streams6.get(1).unwrap(), 10);
+
+        // Test empty remove
+        let empty_recipient = Address::generate(&env);
+        crate::remove_stream_from_recipient_index(&env, &empty_recipient, 999);
+        let empty_streams = crate::load_recipient_streams(&env, &empty_recipient);
+        assert_eq!(empty_streams.len(), 0);
+    });
+}
