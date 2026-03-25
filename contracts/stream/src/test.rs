@@ -9178,7 +9178,10 @@ fn test_get_recipient_streams_includes_active_stream() {
     assert_eq!(state.status, StreamStatus::Active);
 
     let streams = ctx.client().get_recipient_streams(&ctx.recipient);
-    assert!(streams.iter().any(|s| s == id), "active stream must be in index");
+    assert!(
+        streams.iter().any(|s| s == id),
+        "active stream must be in index"
+    );
     assert_eq!(ctx.client().get_recipient_stream_count(&ctx.recipient), 1);
 }
 
@@ -9194,7 +9197,10 @@ fn test_get_recipient_streams_includes_paused_stream() {
     assert_eq!(state.status, StreamStatus::Paused);
 
     let streams = ctx.client().get_recipient_streams(&ctx.recipient);
-    assert!(streams.iter().any(|s| s == id), "paused stream must be in index");
+    assert!(
+        streams.iter().any(|s| s == id),
+        "paused stream must be in index"
+    );
     assert_eq!(ctx.client().get_recipient_stream_count(&ctx.recipient), 1);
 }
 
@@ -9212,7 +9218,10 @@ fn test_get_recipient_streams_includes_completed_stream() {
     assert_eq!(state.status, StreamStatus::Completed);
 
     let streams = ctx.client().get_recipient_streams(&ctx.recipient);
-    assert!(streams.iter().any(|s| s == id), "completed stream must remain in index until closed");
+    assert!(
+        streams.iter().any(|s| s == id),
+        "completed stream must remain in index until closed"
+    );
     assert_eq!(ctx.client().get_recipient_stream_count(&ctx.recipient), 1);
 }
 
@@ -9230,7 +9239,10 @@ fn test_get_recipient_streams_includes_cancelled_stream() {
     assert_eq!(state.status, StreamStatus::Cancelled);
 
     let streams = ctx.client().get_recipient_streams(&ctx.recipient);
-    assert!(streams.iter().any(|s| s == id), "cancelled stream must remain in index");
+    assert!(
+        streams.iter().any(|s| s == id),
+        "cancelled stream must remain in index"
+    );
     assert_eq!(ctx.client().get_recipient_stream_count(&ctx.recipient), 1);
 }
 
@@ -9242,23 +9254,47 @@ fn test_get_recipient_streams_all_statuses_present() {
 
     // stream 0 → Active
     let id_active = ctx.client().create_stream(
-        &ctx.sender, &ctx.recipient, &1000_i128, &1_i128, &0u64, &0u64, &1000u64,
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
     );
     // stream 1 → Paused
     let id_paused = ctx.client().create_stream(
-        &ctx.sender, &ctx.recipient, &1000_i128, &1_i128, &0u64, &0u64, &1000u64,
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
     );
     ctx.client().pause_stream(&id_paused);
     // stream 2 → Cancelled
     let id_cancelled = ctx.client().create_stream(
-        &ctx.sender, &ctx.recipient, &1000_i128, &1_i128, &0u64, &0u64, &1000u64,
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
     );
     ctx.env.ledger().set_timestamp(200);
     ctx.client().cancel_stream(&id_cancelled);
     // stream 3 → Completed (withdraw at end)
     ctx.env.ledger().set_timestamp(0);
     let id_completed = ctx.client().create_stream(
-        &ctx.sender, &ctx.recipient, &1000_i128, &1_i128, &0u64, &0u64, &1000u64,
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
     );
     ctx.env.ledger().set_timestamp(1000);
     ctx.client().withdraw(&id_completed);
@@ -9283,7 +9319,13 @@ fn test_get_recipient_streams_no_cliff_indexed_at_creation() {
     let ctx = TestContext::setup();
     ctx.env.ledger().set_timestamp(0);
     let id = ctx.client().create_stream(
-        &ctx.sender, &ctx.recipient, &1000_i128, &1_i128, &0u64, &0u64, &1000u64,
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
     );
 
     // Index must reflect the stream before any time passes.
@@ -9339,7 +9381,11 @@ fn test_get_recipient_streams_cancel_at_start_time_stays_in_index() {
     assert_eq!(state.cancelled_at, Some(0));
 
     let streams = ctx.client().get_recipient_streams(&ctx.recipient);
-    assert_eq!(streams.len(), 1, "stream cancelled at start must remain in index");
+    assert_eq!(
+        streams.len(),
+        1,
+        "stream cancelled at start must remain in index"
+    );
 }
 
 /// Stream cancelled before cliff: accrual is frozen at 0, stream stays in index.
@@ -9386,7 +9432,10 @@ fn test_get_recipient_streams_cancel_after_cliff_frozen_accrual_in_index() {
     // Advancing time must NOT change the frozen accrual.
     ctx.env.ledger().set_timestamp(9999);
     let accrued_later = ctx.client().calculate_accrued(&id);
-    assert_eq!(accrued_later, 700, "cancelled stream accrual must not grow after cancellation");
+    assert_eq!(
+        accrued_later, 700,
+        "cancelled stream accrual must not grow after cancellation"
+    );
 }
 
 /// Stream cancelled exactly at end_time: full deposit accrued, frozen, stays in index.
@@ -9400,7 +9449,10 @@ fn test_get_recipient_streams_cancel_at_end_time_full_accrual() {
     ctx.client().cancel_stream(&id);
 
     let accrued = ctx.client().calculate_accrued(&id);
-    assert_eq!(accrued, 1000, "full deposit must be accrued when cancelled at end_time");
+    assert_eq!(
+        accrued, 1000,
+        "full deposit must be accrued when cancelled at end_time"
+    );
 
     let streams = ctx.client().get_recipient_streams(&ctx.recipient);
     assert_eq!(streams.len(), 1);
@@ -9417,7 +9469,10 @@ fn test_get_recipient_streams_cancel_past_end_time_capped_accrual() {
     ctx.client().cancel_stream(&id);
 
     let accrued = ctx.client().calculate_accrued(&id);
-    assert_eq!(accrued, 1000, "accrual must be capped at deposit even when cancelled past end");
+    assert_eq!(
+        accrued, 1000,
+        "accrual must be capped at deposit even when cancelled past end"
+    );
 
     let streams = ctx.client().get_recipient_streams(&ctx.recipient);
     assert_eq!(streams.len(), 1);
@@ -9457,7 +9512,11 @@ fn test_get_recipient_streams_batch_create_updates_index() {
     assert_eq!(ids.len(), 2);
 
     let streams = ctx.client().get_recipient_streams(&ctx.recipient);
-    assert_eq!(streams.len(), 2, "batch create must add all streams to index");
+    assert_eq!(
+        streams.len(),
+        2,
+        "batch create must add all streams to index"
+    );
     assert_eq!(streams.get(0).unwrap(), ids.get(0).unwrap());
     assert_eq!(streams.get(1).unwrap(), ids.get(1).unwrap());
     assert_eq!(ctx.client().get_recipient_stream_count(&ctx.recipient), 2);
@@ -9515,7 +9574,13 @@ fn test_get_recipient_streams_sorted_after_interleaved_close() {
     // Create streams 0, 1, 2, 3
     for _ in 0..4 {
         ctx.client().create_stream(
-            &ctx.sender, &ctx.recipient, &1000_i128, &1_i128, &0u64, &0u64, &1000u64,
+            &ctx.sender,
+            &ctx.recipient,
+            &1000_i128,
+            &1_i128,
+            &0u64,
+            &0u64,
+            &1000u64,
         );
     }
 
@@ -9553,7 +9618,13 @@ fn test_get_recipient_stream_count_matches_list_len() {
     // After 3 creates
     for _ in 0..3 {
         ctx.client().create_stream(
-            &ctx.sender, &ctx.recipient, &1000_i128, &1_i128, &0u64, &0u64, &1000u64,
+            &ctx.sender,
+            &ctx.recipient,
+            &1000_i128,
+            &1_i128,
+            &0u64,
+            &0u64,
+            &1000u64,
         );
     }
     assert_eq!(
@@ -9597,7 +9668,13 @@ fn test_get_recipient_streams_ids_resolve_to_correct_recipient() {
 
     for _ in 0..5 {
         ctx.client().create_stream(
-            &ctx.sender, &ctx.recipient, &1000_i128, &1_i128, &0u64, &0u64, &1000u64,
+            &ctx.sender,
+            &ctx.recipient,
+            &1000_i128,
+            &1_i128,
+            &0u64,
+            &0u64,
+            &1000u64,
         );
     }
 
@@ -9608,7 +9685,10 @@ fn test_get_recipient_streams_ids_resolve_to_correct_recipient() {
             state.recipient, ctx.recipient,
             "stream {id} must have the queried recipient"
         );
-        assert_eq!(state.stream_id, id, "stream_id field must match the index entry");
+        assert_eq!(
+            state.stream_id, id,
+            "stream_id field must match the index entry"
+        );
     }
 }
 
@@ -9621,7 +9701,13 @@ fn test_get_recipient_streams_single_second_stream() {
     ctx.env.ledger().set_timestamp(0);
 
     let id = ctx.client().create_stream(
-        &ctx.sender, &ctx.recipient, &1_i128, &1_i128, &0u64, &0u64, &1u64,
+        &ctx.sender,
+        &ctx.recipient,
+        &1_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1u64,
     );
 
     assert_eq!(ctx.client().get_recipient_stream_count(&ctx.recipient), 1);
@@ -9651,7 +9737,11 @@ fn test_get_recipient_streams_admin_cancel_stays_in_index() {
     assert_eq!(state.status, StreamStatus::Cancelled);
 
     let streams = ctx.client().get_recipient_streams(&ctx.recipient);
-    assert_eq!(streams.len(), 1, "admin-cancelled stream must remain in index");
+    assert_eq!(
+        streams.len(),
+        1,
+        "admin-cancelled stream must remain in index"
+    );
     assert_eq!(ctx.client().get_recipient_stream_count(&ctx.recipient), 1);
 }
 
