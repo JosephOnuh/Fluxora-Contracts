@@ -1,73 +1,52 @@
 # Fluxora Backend
 
-Express + TypeScript API for the Fluxora treasury streaming protocol. Today this repository exposes a minimal HTTP surface for stream CRUD and health checks. It does not yet ship a production webhook delivery subsystem, persistent storage, or indexing workers. This README documents the current guarantees and the consumer-facing webhook signature contract the team intends to keep stable when delivery is enabled.
+Express + TypeScript API for the Fluxora treasury streaming protocol. Today this repository exposes a minimal HTTP surface for stream CRUD and health checks. It now documents both the decimal-string serialization policy for chain/API amounts and the consumer-facing webhook signature verification contract the team intends to keep stable when delivery is enabled.
 
 ## Current status
 
 - Implemented today:
   - REST endpoints for API info, health, and in-memory stream CRUD
-  - TypeScript build output for local development
+  - decimal-string validation for amount fields
+  - indexer freshness classification for `healthy`, `starting`, `stalled`, and `not_configured`
+  - consumer-side webhook signing and verification helpers in `src/webhooks/signature.ts`
 - Explicitly not implemented yet:
-  - webhook delivery endpoints
-  - durable delivery logs
+  - live webhook delivery endpoints
+  - durable delivery logs or replay store
+  - persistent database-backed stream/indexer state
+  - automated restart orchestration
   - request rate limiting middleware
-  - duplicate-delivery storage
-  - indexing workers / chain-derived persistence
 
 If a feature in this README is described as a webhook contract, treat it as the documented integration target for consumers and operators, not as proof that the live service already emits webhooks from this repository.
 
-## What's in this repo
+## Decimal String Serialization Policy
 
-- API gateway for stream CRUD and health
-- Streams API backed by an in-memory placeholder
-- A canonical, tested webhook signature utility in `src/webhooks/signature.ts` that defines the verification contract consumers should implement
+All amounts crossing the chain/API boundary are serialized as **decimal strings** to prevent precision loss in JSON.
 
-## Tech stack
+### Amount Fields
 
-- Node.js 18+
-- TypeScript
-- Express
+- `depositAmount` - Total deposit as decimal string (for example `"1000000.0000000"`)
+- `ratePerSecond` - Streaming rate as decimal string (for example `"0.0000116"`)
 
-## Local setup
+### Validation Rules
 
-### Prerequisites
+- Amounts must be strings in decimal notation
+- Native JSON numbers are rejected to prevent floating-point precision issues
+- Values exceeding safe integer ranges are rejected with `DECIMAL_OUT_OF_RANGE`
 
-- Node.js 18+
-- npm or pnpm
+### Error Codes
 
-### Install and run
-
-```bash
-npm install
-npm run dev
-```
-
-API runs at [http://localhost:3000](http://localhost:3000).
-
-### Scripts
-
-- `npm run dev` - run with tsx watch
-- `npm run build` - compile to `dist/`
-- `npm test` - run webhook verification tests
-- `npm start` - run compiled `dist/index.js`
-
-## API overview
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/` | API info |
-| GET | `/health` | Health check |
-| GET | `/api/streams` | List streams |
-| GET | `/api/streams/:id` | Get one stream |
-| POST | `/api/streams` | Create stream with `sender`, `recipient`, `depositAmount`, `ratePerSecond`, `startTime` |
-
-All responses are JSON. Stream data is in-memory until PostgreSQL and chain sync are added.
+| Code | Description |
+|------|-------------|
+| `DECIMAL_INVALID_TYPE` | Amount was not a string |
+| `DECIMAL_INVALID_FORMAT` | String did not match decimal pattern |
+| `DECIMAL_OUT_OF_RANGE` | Value exceeds maximum supported precision |
+| `DECIMAL_EMPTY_VALUE` | Amount was empty or null |
 
 ## Webhook signature verification for consumers
 
 ### Scope and guarantee
 
-The single responsibility area covered here is consumer-side verification of Fluxora webhook deliveries. For this area, Fluxora aims to guarantee:
+For consumer-side verification of Fluxora webhook deliveries, Fluxora aims to guarantee:
 
 - each delivery carries a stable set of verification headers
 - the signature is computed over the exact raw request body, not parsed JSON
@@ -129,90 +108,62 @@ if (!verification.ok) {
 
 | Actor | Trusted for | Not trusted for |
 |-------|-------------|-----------------|
-| Public internet clients | Nothing beyond reaching a public endpoint | Identity, payload integrity, replay prevention |
-| Authenticated partners / webhook consumers | Possession of a shared webhook secret and correct endpoint ownership | Skipping signature checks, bypassing replay controls, sending unbounded payloads |
+| Public clients | Valid request shape only | Payload integrity, replay prevention |
+| Authenticated partners / webhook consumers | Possession of shared webhook secret and endpoint ownership | Skipping signature checks, bypassing replay controls |
 | Administrators / operators | Secret rotation, incident response, delivery diagnostics | Reading secrets from logs or bypassing audit trails |
-| Internal workers / delivery jobs | Constructing signed payloads, retry scheduling, durable delivery state once implemented | Mutating consumer acknowledgements or silently dropping permanent failures |
+| Internal workers | Constructing signed payloads, retry scheduling, durable delivery state once implemented | Silently mutating or dropping verified deliveries |
 
-### Failure modes and expected client-visible behavior
-
-The table below describes the documented outcomes consumers should expect and, where relevant, the response code they should return if they intentionally reject a delivery.
+### Failure modes and expected behavior
 
 | Condition | Expected result | Suggested HTTP outcome |
 |-----------|-----------------|------------------------|
 | Missing secret in consumer config | Treat as configuration failure; do not trust the payload | `500` internally, do not acknowledge |
-| Missing `x-fluxora-delivery-id` / timestamp / signature | Reject as unauthenticated | `401 Unauthorized` |
+| Missing delivery id / timestamp / signature | Reject as unauthenticated | `401 Unauthorized` |
 | Non-numeric or stale timestamp | Reject as replay-risk / invalid input | `400` for malformed timestamp, `401` for stale timestamp |
 | Signature mismatch | Reject as unauthenticated | `401 Unauthorized` |
 | Payload larger than `256 KiB` | Reject before parsing JSON | `413 Payload Too Large` |
-| Duplicate delivery id | Do not process the business action twice | `200 OK` after safe dedupe, or `409 Conflict` if you want the duplicate to be visible |
-| Consumer is overloaded / rate limited | Ask sender to retry later | `429 Too Many Requests` |
-| Dependency outage while processing a verified event | Preserve the verified payload if possible and retry locally | `500` or `503` if you cannot safely acknowledge |
+| Duplicate delivery id | Do not process the business action twice | `200 OK` after safe dedupe or `409 Conflict` |
+| Consumer overloaded | Ask sender to retry later | `429 Too Many Requests` |
 
-### Abuse and reliability notes
+## Health and observability
 
-- Oversized payloads: consumers should bound raw-body size before JSON parsing. The reference helper uses `256 KiB` as the documented ceiling.
-- Excessive request rates: rate limiting is not implemented in this repository today. Consumers should still protect their endpoints and may return `429`.
-- Duplicate submissions: consumers must assume at-least-once delivery and dedupe on `x-fluxora-delivery-id`.
-- Partial data: event payloads should be treated as immutable evidence. If downstream enrichment fails, keep the raw payload and delivery id for replay.
+- `GET /health` returns service status and indexer freshness classification
+- request IDs enable correlation across logs
+- structured JSON logs are expected for diagnostics
+- if `indexer.status = "stalled"`, treat that as an operational signal that chain-derived views would be stale if the real indexer were enabled in this service
 
-### Operator observability and incident diagnosis
+## Local setup
 
-Operators should be able to answer the following without tribal knowledge:
+### Prerequisites
 
-- was the payload signed with the expected secret version
-- what delivery id and event type were involved
-- whether the failure happened at authentication, payload-size validation, replay protection, or downstream business logic
-- whether the event was safely deduplicated or dropped
+- Node.js 18+
+- npm or pnpm
 
-Recommended operational fields to log once delivery exists:
+### Install and run
 
-- delivery id
-- event type
-- timestamp header
-- verification result code
-- response status
-- retry attempt count
-- secret version identifier, never the secret itself
+```bash
+npm install
+npm run dev
+```
 
-Recommended health checks once delivery exists:
+API runs at [http://localhost:3000](http://localhost:3000).
 
-- count of signature failures by consumer endpoint
-- count of stale timestamps
-- count of duplicate deliveries
-- retry queue depth
-- percentage of 2xx acknowledgements
+### Scripts
 
-### Verification evidence for this change
+- `npm run dev` - run with tsx watch
+- `npm run build` - compile to `dist/`
+- `npm test` - run the backend test suite plus webhook signature verification tests
+- `npm start` - run compiled `dist/index.js`
 
-- automated tests in `src/webhooks/signature.test.ts` cover:
-  - exact raw-body signing
-  - stable HMAC output
-  - valid signature acceptance
-  - oversized payload rejection
-  - stale timestamp rejection
-  - signature mismatch rejection
-  - duplicate delivery detection
-- manual review checks:
-  - confirm consumers are instructed to verify raw bytes instead of parsed JSON
-  - confirm deferred items are called out explicitly rather than implied as implemented
+## API overview
 
-### Non-goals and follow-up work
-
-Intentionally deferred in this issue:
-
-- shipping a webhook sender or consumer endpoint in Express
-- persistence for deduplication records
-- secret rotation APIs
-- delivery retry workers
-- OpenAPI for webhook endpoints, because no webhook HTTP route exists in this repository yet
-
-Recommended follow-up issues:
-
-- implement webhook delivery route(s) and durable delivery store
-- add raw-body middleware and rate limiting
-- publish OpenAPI once webhook endpoints are live
-- add runbook-backed monitoring and alert thresholds
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/` | API info |
+| GET | `/health` | Health check |
+| GET | `/api/streams` | List streams |
+| GET | `/api/streams/:id` | Get one stream |
+| POST | `/api/streams` | Create stream |
 
 ## Project structure
 
@@ -221,6 +172,25 @@ src/
   routes/          # health, streams
   webhooks/        # canonical webhook signing and verification contract
   index.ts         # Express app and server
+k6/
+  main.js          # k6 entrypoint — composes scenarios
+  config.js        # thresholds, stage profiles, base URL
+  helpers.js       # shared metrics and payload helpers
+  scenarios/       # per-endpoint load scenarios
+```
+
+## Load testing (k6)
+
+The `k6/` directory contains a load-testing harness for critical endpoints.
+
+Common commands:
+
+```bash
+npm run dev
+npm run k6:smoke
+npm run k6:load
+npm run k6:stress
+npm run k6:soak
 ```
 
 ## Environment
@@ -228,6 +198,7 @@ src/
 Optional:
 
 - `PORT` - server port, default `3000`
+- `FLUXORA_WEBHOOK_SECRET` - shared secret for webhook signature verification once delivery is enabled
 
 Likely future additions:
 
@@ -235,7 +206,6 @@ Likely future additions:
 - `REDIS_URL`
 - `HORIZON_URL`
 - `JWT_SECRET`
-- `FLUXORA_WEBHOOK_SECRET`
 
 ## Related repos
 
