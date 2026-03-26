@@ -1,31 +1,48 @@
-import { Router, Request, Response } from 'express';
-import {
-  validateDecimalString,
-  validateAmountFields,
-  DecimalSerializationError,
-} from '../serialization/decimal.js';
-import {
-  ApiError,
-  ApiErrorCode,
-  notFound,
-  validationError,
-  asyncHandler,
-} from '../middleware/errorHandler.js';
-import { SerializationLogger, info, debug } from '../utils/logger.js';
-
 /**
+ * Streams API - Database-backed stream management with filtering and pagination
+ *
+ * Provides RESTful endpoints for stream data with:
+ * - Pagination support
+ * - Filtering by status, address, date range
+ * - Trust boundaries and authorization
+ *
  * @openapi
  * /api/streams:
  *   get:
- *     summary: List all streams
+ *     summary: List all streams with filtering and pagination
  *     description: |
- *       Returns all active streaming payment streams.
+ *       Returns streams with support for filtering and pagination.
  *       All amount fields are serialized as decimal strings for precision.
  *     tags:
  *       - streams
+ *     parameters:
+ *       - name: status
+ *         in: query
+ *         schema:
+ *           type: string
+ *           enum: [active, paused, completed, cancelled]
+ *       - name: sender
+ *         in: query
+ *         schema:
+ *           type: string
+ *       - name: recipient
+ *         in: query
+ *         schema:
+ *           type: string
+ *       - name: limit
+ *         in: query
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *           maximum: 100
+ *       - name: offset
+ *         in: query
+ *         schema:
+ *           type: integer
+ *           default: 0
  *     responses:
  *       200:
- *         description: List of streams
+ *         description: List of streams with pagination metadata
  *         content:
  *           application/json:
  *             schema:
@@ -35,50 +52,24 @@ import { SerializationLogger, info, debug } from '../utils/logger.js';
  *                   type: array
  *                   items:
  *                     $ref: '#/components/schemas/Stream'
+ *                 pagination:
+ *                   type: object
+ *                   properties:
+ *                     total:
+ *                       type: integer
+ *                     limit:
+ *                       type: integer
+ *                     offset:
+ *                       type: integer
+ *                     hasMore:
+ *                       type: boolean
  *       500:
  *         description: Internal server error
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- * 
- *   post:
- *     summary: Create a new stream
- *     description: |
- *       Creates a new streaming payment stream with the specified parameters.
- *       All amount fields must be provided as decimal strings.
- *       
- *       **Trust Boundary Note**: Amount fields are validated to ensure no precision
- *       loss when crossing the chain/API boundary. Invalid inputs receive explicit
- *       error responses.
- *     tags:
- *       - streams
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/StreamCreateRequest'
- *     responses:
- *       201:
- *         description: Stream created successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Stream'
- *       400:
- *         description: Invalid input
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- * 
+ *
  * /api/streams/{id}:
  *   get:
  *     summary: Get a stream by ID
- *     description: |
- *       Returns a single stream by its identifier.
- *       All amount fields are serialized as decimal strings for precision.
+ *     description: Returns a single stream by its identifier
  *     tags:
  *       - streams
  *     parameters:
@@ -87,21 +78,12 @@ import { SerializationLogger, info, debug } from '../utils/logger.js';
  *         required: true
  *         schema:
  *           type: string
- *         description: Stream identifier
  *     responses:
  *       200:
  *         description: Stream details
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Stream'
  *       404:
  *         description: Stream not found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- * 
+ *
  * components:
  *   schemas:
  *     Stream:
@@ -111,330 +93,209 @@ import { SerializationLogger, info, debug } from '../utils/logger.js';
  *         id:
  *           type: string
  *           description: Unique stream identifier
- *           example: "stream-1709123456789"
- *         sender:
+ *         sender_address:
  *           type: string
  *           description: Stellar account address of the sender
- *           example: "GCSX2..."
- *         recipient:
+ *         recipient_address:
  *           type: string
  *           description: Stellar account address of the recipient
- *           example: "GDRX2..."
- *         depositAmount:
+ *         amount:
  *           type: string
- *           description: |
- *             Total deposit amount as a decimal string.
- *             Never serialized as a floating point number to prevent precision loss.
- *           pattern: '^[+-]?\d+(\.\d+)?$'
- *           example: "1000000.0000000"
- *         ratePerSecond:
+ *           description: Total streaming amount (decimal string)
+ *         streamed_amount:
  *           type: string
- *           description: |
- *             Streaming rate per second as a decimal string.
- *             Precision is critical for accurate time-based payments.
- *           pattern: '^[+-]?\d+(\.\d+)?$'
- *           example: "0.0000116"
- *         startTime:
+ *           description: Amount streamed so far (decimal string)
+ *         remaining_amount:
+ *           type: string
+ *           description: Remaining amount (decimal string)
+ *         rate_per_second:
+ *           type: string
+ *           description: Streaming rate per second (decimal string)
+ *         start_time:
  *           type: integer
- *           format: int64
- *           description: Unix timestamp when the stream started
- *           example: 1709123456
- *         endTime:
+ *           description: Unix timestamp when stream starts
+ *         end_time:
  *           type: integer
- *           format: int64
- *           description: Unix timestamp when the stream ends (0 if indefinite)
- *           example: 1711719456
+ *           description: Unix timestamp when stream ends (0 if indefinite)
  *         status:
  *           type: string
- *           enum: [active, paused, cancelled, completed]
- *           description: Current status of the stream
- *           example: "active"
- * 
- *     StreamCreateRequest:
- *       type: object
- *       required:
- *         - sender
- *         - recipient
- *         - depositAmount
- *         - ratePerSecond
- *       properties:
- *         sender:
+ *           enum: [active, paused, completed, cancelled]
+ *         contract_id:
  *           type: string
- *           description: Stellar account address of the sender
- *           example: "GCSX2..."
- *         recipient:
+ *           description: Soroban contract ID
+ *         transaction_hash:
  *           type: string
- *           description: Stellar account address of the recipient
- *           example: "GDRX2..."
- *         depositAmount:
+ *           description: Transaction hash that created the stream
+ *         created_at:
  *           type: string
- *           description: |
- *             Total deposit amount. Must be a decimal string.
- *             Example: "1000000.0000000" for 1 million XLM with 7 decimal places.
- *           pattern: '^[+-]?\d+(\.\d+)?$'
- *           example: "1000000.0000000"
- *         ratePerSecond:
+ *           description: When the record was created
+ *         updated_at:
  *           type: string
- *           description: |
- *             Streaming rate per second as a decimal string.
- *             For 1 XLM/day, use "0.0000116" (with 7 decimal precision).
- *           pattern: '^[+-]?\d+(\.\d+)?$'
- *           example: "0.0000116"
- *         startTime:
- *           type: integer
- *           format: int64
- *           description: Unix timestamp when the stream should start (optional, defaults to now)
- *           example: 1709123456
- * 
- *     Error:
- *       type: object
- *       properties:
- *         error:
- *           type: object
- *           properties:
- *             code:
- *               type: string
- *               description: Machine-readable error code
- *               enum:
- *                 - VALIDATION_ERROR
- *                 - DECIMAL_ERROR
- *                 - NOT_FOUND
- *                 - CONFLICT
- *                 - METHOD_NOT_ALLOWED
- *                 - INTERNAL_ERROR
- *                 - SERVICE_UNAVAILABLE
- *             message:
- *               type: string
- *               description: Human-readable error message
- *             details:
- *               type: object
- *               description: Additional error context (varies by error type)
- *             requestId:
- *               type: string
- *               description: Request identifier for tracing
+ *           description: When the record was last updated
  */
+
+import { Router } from "express";
+import type { Request, Response } from "express";
+import { streamRepository } from "../db/repositories/streamRepository.js";
+import { StreamFilter, StreamStatus } from "../db/types.js";
+import {
+  asyncHandler,
+  notFound,
+  validationError,
+} from "../middleware/errorHandler.js";
+import { info, debug } from "../utils/logger.js";
 
 export const streamsRouter = Router();
 
-// Amount fields that must be decimal strings per serialization policy
-const AMOUNT_FIELDS = ['depositAmount', 'ratePerSecond'] as const;
+/**
+ * Default pagination values
+ */
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
 
-// In-memory stream store (placeholder for DB integration)
-const streams: Array<{
-  id: string;
-  sender: string;
-  recipient: string;
-  depositAmount: string;
-  ratePerSecond: string;
-  startTime: number;
-  endTime: number;
-  status: string;
-}> = [];
+/**
+ * Validate and parse query parameters
+ */
+function parseQueryParams(req: Request): {
+  filter: StreamFilter;
+  limit: number;
+  offset: number;
+} {
+  const {
+    status,
+    sender,
+    recipient,
+    contract_id,
+    start_from,
+    start_to,
+    end_from,
+    end_to,
+    limit,
+    offset,
+  } = req.query;
+
+  // Validate status
+  let validStatus: StreamStatus | undefined;
+  if (status) {
+    if (
+      !["active", "paused", "completed", "cancelled"].includes(status as string)
+    ) {
+      throw validationError(
+        "Invalid status value. Must be one of: active, paused, completed, cancelled",
+      );
+    }
+    validStatus = status as StreamStatus;
+  }
+
+  // Validate addresses (basic check)
+  const senderAddress = typeof sender === "string" ? sender : undefined;
+  const recipientAddress =
+    typeof recipient === "string" ? recipient : undefined;
+  const contractId = typeof contract_id === "string" ? contract_id : undefined;
+
+  // Parse timestamps
+  const startTimeFrom = start_from
+    ? parseInt(start_from as string, 10)
+    : undefined;
+  const startTimeTo = start_to ? parseInt(start_to as string, 10) : undefined;
+  const endTimeFrom = end_from ? parseInt(end_from as string, 10) : undefined;
+  const endTimeTo = end_to ? parseInt(end_to as string, 10) : undefined;
+
+  // Validate timestamps
+  if (startTimeFrom !== undefined && isNaN(startTimeFrom)) {
+    throw validationError("start_from must be a valid integer");
+  }
+  if (startTimeTo !== undefined && isNaN(startTimeTo)) {
+    throw validationError("start_to must be a valid integer");
+  }
+  if (endTimeFrom !== undefined && isNaN(endTimeFrom)) {
+    throw validationError("end_from must be a valid integer");
+  }
+  if (endTimeTo !== undefined && isNaN(endTimeTo)) {
+    throw validationError("end_to must be a valid integer");
+  }
+
+  // Parse pagination
+  const parsedLimit = limit ? parseInt(limit as string, 10) : DEFAULT_LIMIT;
+  const parsedOffset = offset ? parseInt(offset as string, 10) : 0;
+
+  if (isNaN(parsedLimit) || parsedLimit < 1) {
+    throw validationError("limit must be a positive integer");
+  }
+  if (isNaN(parsedOffset) || parsedOffset < 0) {
+    throw validationError("offset must be a non-negative integer");
+  }
+
+  return {
+    filter: {
+      status: validStatus,
+      sender_address: senderAddress,
+      recipient_address: recipientAddress,
+      contract_id: contractId,
+      start_time_from: startTimeFrom,
+      start_time_to: startTimeTo,
+      end_time_from: endTimeFrom,
+      end_time_to: endTimeTo,
+    },
+    limit: Math.min(parsedLimit, MAX_LIMIT),
+    offset: parsedOffset,
+  };
+}
 
 /**
  * GET /api/streams
- * List all streams with decimal string serialization
+ * List all streams with filtering and pagination
+ *
+ * Trust boundary: Public read-only access
  */
 streamsRouter.get(
-  '/',
-  asyncHandler(async (_req: Request, res: Response) => {
-    info('Listing all streams', { count: streams.length });
-    debug('Streams retrieved', { streams: streams.length });
+  "/",
+  asyncHandler(async (req: Request, res: Response) => {
+    const { filter, limit, offset } = parseQueryParams(req);
+    const requestId = req.correlationId;
+
+    debug("Listing streams", { filter, limit, offset, requestId });
+
+    const result = streamRepository.find(filter, { limit, offset });
+
+    info("Streams listed", {
+      count: result.streams.length,
+      total: result.total,
+      requestId,
+    });
 
     res.json({
-      streams,
-      total: streams.length,
+      streams: result.streams,
+      pagination: {
+        total: result.total,
+        limit: result.limit,
+        offset: result.offset,
+        hasMore: result.hasMore,
+      },
     });
-  })
+  }),
 );
 
 /**
  * GET /api/streams/:id
  * Get a single stream by ID
+ *
+ * Trust boundary: Public read-only access
  */
 streamsRouter.get(
-  '/:id',
+  "/:id",
   asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
-    const requestId = (req as Request & { id?: string }).id;
+    const requestId = req.correlationId;
 
-    debug('Fetching stream', { id, requestId });
+    debug("Fetching stream", { id, requestId });
 
-    const stream = streams.find((s) => s.id === id);
+    const stream = streamRepository.getById(id);
 
     if (!stream) {
-      throw notFound('Stream', id);
+      throw notFound("Stream", id);
     }
 
     res.json(stream);
-  })
-);
-
-/**
- * POST /api/streams
- * Create a new stream with decimal string validation
- */
-streamsRouter.post(
-  '/',
-  asyncHandler(async (req: Request, res: Response) => {
-    const { sender, recipient, depositAmount, ratePerSecond, startTime, endTime } = req.body ?? {};
-    const requestId = (req as Request & { id?: string }).id;
-
-    info('Creating new stream', { requestId });
-
-    // Validate required string fields
-    if (typeof sender !== 'string' || sender.trim() === '') {
-      throw validationError('sender must be a non-empty string');
-    }
-
-    if (typeof recipient !== 'string' || recipient.trim() === '') {
-      throw validationError('recipient must be a non-empty string');
-    }
-
-    // Validate amount fields against decimal string policy
-    const amountValidation = validateAmountFields(
-      { depositAmount, ratePerSecond } as Record<string, unknown>,
-      AMOUNT_FIELDS as unknown as string[]
-    );
-
-    if (!amountValidation.valid) {
-      // Log validation failures for diagnostics
-      for (const err of amountValidation.errors) {
-        SerializationLogger.validationFailed(
-          err.field || 'unknown',
-          err.rawValue,
-          err.code,
-          requestId
-        );
-      }
-
-      throw new ApiError(
-        ApiErrorCode.VALIDATION_ERROR,
-        'Invalid decimal string format for amount fields',
-        400,
-        {
-          errors: amountValidation.errors.map((e) => ({
-            field: e.field,
-            code: e.code,
-            message: e.message,
-          })),
-        }
-      );
-    }
-
-    // Additional semantic validation
-    const depositResult = validateDecimalString(depositAmount, 'depositAmount');
-    const validatedDepositAmount = depositResult.valid && depositResult.value
-      ? depositResult.value
-      : '0'; // Default to '0' for missing values
-    
-    // Only validate semantic constraints for provided values
-    if (depositAmount !== undefined && depositAmount !== null) {
-      const depositNum = parseFloat(validatedDepositAmount);
-      if (depositNum <= 0) {
-        throw validationError('depositAmount must be greater than zero');
-      }
-    }
-
-    const rateResult = validateDecimalString(ratePerSecond, 'ratePerSecond');
-    const validatedRatePerSecond = rateResult.valid && rateResult.value
-      ? rateResult.value
-      : '0'; // Default to '0' for missing values
-    
-    // Only validate semantic constraints for provided values
-    if (ratePerSecond !== undefined && ratePerSecond !== null) {
-      const rateNum = parseFloat(validatedRatePerSecond);
-      if (rateNum < 0) {
-        throw validationError('ratePerSecond cannot be negative');
-      }
-    }
-
-    // Validate startTime if provided
-    let validatedStartTime = Math.floor(Date.now() / 1000);
-    if (startTime !== undefined) {
-      if (typeof startTime !== 'number' || !Number.isInteger(startTime) || startTime < 0) {
-        throw validationError('startTime must be a non-negative integer');
-      }
-      validatedStartTime = startTime;
-    }
-
-    // Validate endTime if provided
-    let validatedEndTime = 0;
-    if (endTime !== undefined) {
-      if (typeof endTime !== 'number' || !Number.isInteger(endTime) || endTime < 0) {
-        throw validationError('endTime must be a non-negative integer');
-      }
-      validatedEndTime = endTime;
-    }
-
-    // Create the stream with validated decimal strings
-    const id = `stream-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const stream = {
-      id,
-      sender: sender.trim(),
-      recipient: recipient.trim(),
-      depositAmount: validatedDepositAmount,
-      ratePerSecond: validatedRatePerSecond,
-      startTime: validatedStartTime,
-      endTime: validatedEndTime,
-      status: 'active',
-    };
-
-    streams.push(stream);
-
-    SerializationLogger.amountSerialized(2, requestId);
-    info('Stream created', { id, requestId });
-
-    res.status(201).json(stream);
-  })
-);
-
-/**
- * DELETE /api/streams/:id
- * Cancel a stream
- * 
- * Failure modes:
- * - Stream not found: Returns 404
- * - Stream already cancelled: Returns 409 Conflict
- */
-streamsRouter.delete(
-  '/:id',
-  asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params;
-    const requestId = (req as Request & { id?: string }).id;
-
-    debug('Deleting stream', { id, requestId });
-
-    const index = streams.findIndex((s) => s.id === id);
-
-    if (index === -1) {
-      throw notFound('Stream', id);
-    }
-
-    const stream = streams[index];
-
-    if (stream.status === 'cancelled') {
-      throw new ApiError(
-        ApiErrorCode.CONFLICT,
-        'Stream is already cancelled',
-        409,
-        { streamId: id }
-      );
-    }
-
-    if (stream.status === 'completed') {
-      throw new ApiError(
-        ApiErrorCode.CONFLICT,
-        'Cannot cancel a completed stream',
-        409,
-        { streamId: id }
-      );
-    }
-
-    streams[index] = { ...stream, status: 'cancelled' };
-
-    info('Stream cancelled', { id, requestId });
-
-    res.json({ message: 'Stream cancelled', id });
-  })
+  }),
 );
