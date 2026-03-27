@@ -2881,3 +2881,78 @@ fn integration_create_streams_single_token_pull_equals_sum() {
     assert_eq!(ctx.token.balance(&ctx.sender), sender_before - 3500);
     assert_eq!(ctx.token.balance(&ctx.contract_id), 3500);
 }
+
+#[test]
+fn integration_global_pause_lifecycle() {
+    let ctx = TestContext::setup();
+    ctx.env.ledger().set_timestamp(0);
+
+    // 1. Create initial stream while unpaused
+    let stream_id = ctx.client().create_stream(
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
+    );
+
+    // 2. Admin pauses contract
+    ctx.client().set_contract_paused(&true);
+
+    // 3. Sender attempts to create stream -> blocked
+    let result_create = ctx.client().try_create_stream(
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
+    );
+    assert_eq!(result_create, Err(Ok(ContractError::ContractPaused)));
+
+    // 4. Sender attempts batch creation -> blocked
+    let params = soroban_sdk::vec![
+        &ctx.env,
+        CreateStreamParams {
+            recipient: ctx.recipient.clone(),
+            deposit_amount: 1000,
+            rate_per_second: 1,
+            start_time: 0,
+            cliff_time: 0,
+            end_time: 1000,
+        },
+    ];
+    let result_batch = ctx.client().try_create_streams(&ctx.sender, &params);
+    assert_eq!(result_batch, Err(Ok(ContractError::ContractPaused)));
+
+    // 5. Active stream operations continue: Top-up succeeds
+    ctx.client().top_up_stream(&stream_id, &ctx.sender, &500_i128);
+
+    // 6. Active stream operations continue: Withdraw succeeds
+    ctx.env.ledger().set_timestamp(500);
+    ctx.client().withdraw(&stream_id);
+    let state = ctx.client().get_stream_state(&stream_id);
+    assert_eq!(state.withdrawn_amount, 500);
+
+    // 7. Active stream operations continue: Sender pause/resume succeeds
+    ctx.client().pause_stream(&stream_id);
+    ctx.client().resume_stream(&stream_id);
+
+    // 8. Admin unpauses contract
+    ctx.client().set_contract_paused(&false);
+
+    // 9. Creation succeeds again
+    let stream_id_2 = ctx.client().create_stream(
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &500u64,
+        &500u64,
+        &1500u64,
+    );
+    assert_eq!(stream_id_2, stream_id + 1);
+}
