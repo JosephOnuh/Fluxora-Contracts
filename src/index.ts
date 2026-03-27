@@ -1,40 +1,32 @@
-import express from 'express';
-import { streamsRouter } from './routes/streams.js';
-import { healthRouter } from './routes/health.js';
-import { registry } from './metrics.js';
-import { httpMetrics } from './middleware/httpMetrics.js';
+/**
+ * Fluxora Backend — server entry point.
+ *
+ * Responsibilities:
+ *  - Bind the Express app to a TCP port.
+ *  - Register OS signal handlers for graceful shutdown.
+ *
+ * Everything else (routes, middleware, app config) lives in app.ts.
+ * Shutdown logic (drain + hooks) lives in shutdown.ts.
+ */
 
-const app = express();
-const PORT = process.env.PORT ?? 3000;
+import http from 'node:http';
+import { app } from './app.js';
+import { gracefulShutdown } from './shutdown.js';
+import { logger } from './lib/logger.js';
 
-app.use(express.json());
-app.use(httpMetrics);
+const PORT = Number(process.env.PORT ?? 3000);
+const SHUTDOWN_TIMEOUT_MS = Number(process.env.SHUTDOWN_TIMEOUT_MS ?? 30_000);
 
-app.get('/metrics', async (_req, res) => {
-  try {
-    const metrics = await registry.metrics();
-    res.set('Content-Type', registry.contentType);
-    res.end(metrics);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to collect metrics' });
-  }
+const server = http.createServer(app);
+
+server.listen(PORT, () => {
+  logger.info('Fluxora API listening', undefined, { port: PORT });
 });
 
-app.use('/health', healthRouter);
-app.use('/api/streams', streamsRouter);
-
-app.get('/', (_req, res) => {
-  res.json({
-    name: 'Fluxora API',
-    version: '0.1.0',
-    docs: 'Programmable treasury streaming on Stellar.',
-  });
-});
-
-export { app };
-
-if (process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, () => {
-    console.log(`Fluxora API listening on http://localhost:${PORT}`);
-  });
+async function shutdown(signal: string): Promise<void> {
+  await gracefulShutdown(server, signal, SHUTDOWN_TIMEOUT_MS);
+  process.exit(0);
 }
+
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT',  () => void shutdown('SIGINT'));
