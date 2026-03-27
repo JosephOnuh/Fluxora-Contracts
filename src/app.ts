@@ -4,6 +4,7 @@ import { streamsRouter } from './routes/streams.js';
 import { healthRouter } from './routes/health.js';
 import { indexerRouter } from './routes/indexer.js';
 import { correlationIdMiddleware } from './middleware/correlationId.js';
+import { corsAllowlistMiddleware } from './middleware/cors.js';
 import { requestLoggerMiddleware } from './middleware/requestLogger.js';
 import { isShuttingDown } from './shutdown.js';
 
@@ -12,6 +13,7 @@ export const app = express();
 app.use(express.json({ limit: '256kb' }));
 // Correlation ID must be first so all subsequent middleware and routes have req.correlationId.
 app.use(correlationIdMiddleware);
+app.use(corsAllowlistMiddleware);
 app.use(requestLoggerMiddleware);
 
 // During shutdown, tell clients to close the connection after this response

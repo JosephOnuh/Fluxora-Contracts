@@ -312,8 +312,6 @@ import { recordAuditEvent } from '../lib/auditLog.js';
  *               description: Request identifier for tracing
  */
 
-import { ApiError } from '../errors.js';
-
 export const streamsRouter = Router();
 
 // Amount fields that must be decimal strings per serialization policy

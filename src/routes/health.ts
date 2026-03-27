@@ -12,6 +12,12 @@ import {
 
 export const healthRouter = Router();
 
+    enabled: false,
+    stallThresholdMs: DEFAULT_INDEXER_STALL_THRESHOLD_MS,
+  });
+
+  res.json({
+    status: indexer.status === 'stalled' || indexer.status === 'starting'
 /**
  * GET /health - Liveness + basic system status
  */

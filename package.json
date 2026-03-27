@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.cjs --watch"
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js && node --import tsx --test src/webhooks/signature.test.ts",
     "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
