@@ -13,6 +13,7 @@ import {
 } from '../middleware/errorHandler.js';
 import { requireAuth } from '../middleware/auth.js';
 import { SerializationLogger, info, debug } from '../utils/logger.js';
+import { recordAuditEvent } from '../lib/auditLog.js';
 
 /**
  * @openapi
@@ -804,6 +805,8 @@ streamsRouter.delete(
     streams[index] = { ...stream, status: 'cancelled' };
 
     info('Stream cancelled', { id, requestId });
+
+    recordAuditEvent('STREAM_CANCELLED', 'stream', id, req.correlationId);
 
     res.json({ message: 'Stream cancelled', id });
   })
