@@ -2092,14 +2092,15 @@ impl FluxoraStream {
     ///
     /// # Authorization
     /// - Requires authorization from `funder`.
-    /// - `funder` must be either the stream's `sender` or the contract `admin` (from `Config`).
+    /// - No sender/admin relationship is enforced on-chain: any address may top up
+    ///   if it signs the call and can transfer the requested token amount.
     ///
     /// # Behaviour
-    /// - Pulls `amount` tokens from `funder` into the contract.
     /// - Increases `deposit_amount` by `amount` (with overflow protection).
+    /// - Persists the increased deposit before calling the token contract to pull
+    ///   `amount` from `funder`.
     /// - Does **not** modify `rate_per_second` or any timing fields.
-    /// - Preserves all invariants: `deposit_amount` remains greater than or equal to
-    ///   the maximum streamable amount under the current schedule.
+    /// - Leaves `status`, `withdrawn_amount`, and all schedule fields unchanged.
     ///
     /// # Restrictions
     /// - Only streams in `Active` or `Paused` status can be topped up.
@@ -2108,6 +2109,17 @@ impl FluxoraStream {
     ///
     /// # CEI Pattern
     /// State is persisted **before** the external token pull to prevent reentrancy.
+    ///
+    /// # Returns
+    /// - `Ok(())` on success.
+    /// - `Err(StreamNotFound)` if `stream_id` does not exist.
+    /// - `Err(InvalidParams)` if `amount <= 0`.
+    /// - `Err(InvalidState)` if the stream is not `Active` or `Paused`.
+    /// - `Err(ArithmeticOverflow)` if `deposit_amount + amount` exceeds `i128::MAX`.
+    ///
+    /// # Failure Semantics
+    /// - If auth fails or the token transfer fails, the transaction reverts atomically:
+    ///   no deposit increase persists and no `top_up` event is emitted.
     ///
     /// # Events
     /// - Emits a `top_up` event with `StreamToppedUp` payload on success.
