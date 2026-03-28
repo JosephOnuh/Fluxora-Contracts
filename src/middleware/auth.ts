@@ -1,8 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
-import { verifyToken } from '../lib/auth.js';
-import { isValidApiKey, getApiKeyFromRequest } from '../lib/apiKey.js';
-import { ApiErrorCode } from './errorHandler.js';
-import { warn, info } from '../utils/logger.js';
+import { verifyToken, UserPayload } from '../lib/auth.js';
+import { ApiError, ApiErrorCode } from './errorHandler.js';
+import { warn, info, debug } from '../utils/logger.js';
 
 /**
  * Middleware to optionally authenticate a request via JWT or API Key.
@@ -12,8 +11,9 @@ import { warn, info } from '../utils/logger.js';
  */
 export function authenticate(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
-  const apiKey = getApiKeyFromRequest(req.headers as any);
-  const requestId = (req as any).id || req.correlationId;
+  const requestId = (req as any).id || (req as any).correlationId;
+
+  debug('Authentication middleware triggered', { hasAuthHeader: !!authHeader, requestId });
 
   // 1. Try API Key first (common for server-to-server)
   if (apiKey) {

@@ -11,8 +11,10 @@ export interface Config {
 
     // Infrastructure
     databaseUrl: string;
-    databasePoolSize: number;
+    databasePoolMin: number;
+    databasePoolMax: number;
     databaseConnectionTimeout: number;
+    databaseIdleTimeout: number;
 
     redisUrl: string;
     redisEnabled: boolean;
@@ -216,8 +218,10 @@ export function loadConfig(): Config {
         apiVersion: '0.1.0',
 
         databaseUrl,
-        databasePoolSize: parseIntEnv(process.env.DATABASE_POOL_SIZE, 10, 1, 100),
-        databaseConnectionTimeout: parseIntEnv(process.env.DATABASE_CONNECTION_TIMEOUT, 5000, 1000, 60000),
+        databasePoolMin: parseIntEnv(process.env.DB_POOL_MIN, 2, 1, 100),
+        databasePoolMax: parseIntEnv(process.env.DB_POOL_MAX, 10, 1, 100),
+        databaseConnectionTimeout: parseIntEnv(process.env.DB_CONNECTION_TIMEOUT, 5000, 1000, 60000),
+        databaseIdleTimeout: parseIntEnv(process.env.DB_IDLE_TIMEOUT, 30000, 1000, 600000),
 
         redisUrl: validateUrl(redisUrl, 'REDIS_URL'),
         redisEnabled: parseBoolEnv(process.env.REDIS_ENABLED, true),
