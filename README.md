@@ -66,10 +66,10 @@ Soroban smart contracts for the Fluxora treasury streaming protocol on Stellar. 
 
 This project pins dependencies for **reproducible builds** and **auditor compatibility**:
 
-| Component | Version | Location | Purpose |
-|---|---|---|---|
-| **Rust** | 1.75 | `rust-toolchain.toml` | Ensures consistent WASM compilation |
-| **soroban-sdk** | 21.7.7 | `contracts/stream/Cargo.toml` | Locked to tested Stellar Soroban network version |
+| Component       | Version | Location                      | Purpose                                          |
+| --------------- | ------- | ----------------------------- | ------------------------------------------------ |
+| **Rust**        | 1.75    | `rust-toolchain.toml`         | Ensures consistent WASM compilation              |
+| **soroban-sdk** | 21.7.7  | `contracts/stream/Cargo.toml` | Locked to tested Stellar Soroban network version |
 
 When upgrading versions:
 
