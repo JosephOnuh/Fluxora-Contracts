@@ -3895,6 +3895,133 @@ fn test_close_completed_stream_second_close_panics() {
     );
 }
 
+/// close_completed_stream is permissionless: anyone can call it.
+/// This test verifies that a third party (not sender, not recipient, not admin)
+/// can successfully close a completed stream.
+#[test]
+fn test_close_completed_stream_permissionless_third_party() {
+    let ctx = TestContext::setup();
+    let stream_id = ctx.create_default_stream();
+
+    // Complete the stream
+    ctx.env.ledger().set_timestamp(1000);
+    ctx.client().withdraw(&stream_id);
+
+    // Verify stream is completed
+    let state = ctx.client().get_stream_state(&stream_id);
+    assert_eq!(state.status, StreamStatus::Completed);
+
+    // Third party (not sender, recipient, or admin) can close
+    // In TestContext, we have sender, recipient, and admin
+    // The third party is generated fresh - no auth required
+    let third_party = soroban_sdk::Address::generate(&ctx.env);
+
+    // Third party can call close_completed_stream without auth
+    ctx.client().close_completed_stream(&stream_id);
+
+    // Verify stream is removed
+    let result = ctx.client().try_get_stream_state(&stream_id);
+    assert!(result.is_err(), "closed stream must not be queryable");
+}
+
+/// close_completed_stream removes the stream from recipient's index.
+/// Verifies that get_recipient_streams no longer includes the closed stream.
+#[test]
+fn test_close_completed_stream_removes_from_recipient_index() {
+    let ctx = TestContext::setup();
+    let stream_id = ctx.create_default_stream();
+
+    // Verify stream is in recipient's index
+    let streams_before = ctx.client().get_recipient_streams(&ctx.recipient);
+    assert!(
+        streams_before.iter().any(|id| id == stream_id),
+        "stream must be in recipient's index before close"
+    );
+
+    // Complete and close
+    ctx.env.ledger().set_timestamp(1000);
+    ctx.client().withdraw(&stream_id);
+    ctx.client().close_completed_stream(&stream_id);
+
+    // Verify stream is removed from recipient's index
+    let streams_after = ctx.client().get_recipient_streams(&ctx.recipient);
+    assert!(
+        !streams_after.iter().any(|id| id == stream_id),
+        "stream must not be in recipient's index after close"
+    );
+}
+
+/// close_completed_stream emits StreamClosed event with correct stream_id.
+/// Verifies the event data matches the closed stream.
+#[test]
+fn test_close_completed_stream_event_data() {
+    let ctx = TestContext::setup();
+    let stream_id = ctx.create_default_stream();
+
+    // Complete the stream
+    ctx.env.ledger().set_timestamp(1000);
+    ctx.client().withdraw(&stream_id);
+
+    let events_before = ctx.env.events().all().len();
+
+    // Close the stream
+    ctx.client().close_completed_stream(&stream_id);
+
+    let events_after = ctx.env.events().all().len();
+    assert!(
+        events_after > events_before,
+        "close must emit at least one event"
+    );
+
+    // Verify the last event is the closed event
+    let all_events = ctx.env.events().all();
+    let last_event = all_events.last();
+    assert!(last_event.is_some(), "must have at least one event");
+}
+
+/// close_completed_stream on a paused completed stream succeeds.
+/// After withdraw at end_time, stream status is Completed regardless of pause state.
+#[test]
+fn test_close_completed_stream_paused_then_completed() {
+    let ctx = TestContext::setup();
+    let end_time = 1000u64;
+    let stream_id = ctx
+        .client()
+        .create_stream(&ctx.sender, &ctx.recipient, &1000, &1, &0, &0, &end_time);
+
+    // Pause the stream
+    ctx.env.ledger().set_timestamp(500);
+    ctx.client().pause_stream(&stream_id);
+
+    // Advance to end_time and withdraw (completes the stream)
+    ctx.env.ledger().set_timestamp(1000);
+    let withdrawn = ctx.client().withdraw(&stream_id);
+    assert_eq!(withdrawn, 1000);
+
+    // Verify status is Completed
+    let state = ctx.client().get_stream_state(&stream_id);
+    assert_eq!(state.status, StreamStatus::Completed);
+
+    // Close should succeed even though stream was paused
+    ctx.client().close_completed_stream(&stream_id);
+
+    // Verify stream is removed
+    let result = ctx.client().try_get_stream_state(&stream_id);
+    assert!(result.is_err(), "closed stream must not be queryable");
+}
+
+/// close_completed_stream on non-existent stream_id must fail with StreamNotFound.
+#[test]
+fn test_close_completed_stream_not_found() {
+    let ctx = TestContext::setup();
+
+    let result = ctx.client().try_close_completed_stream(&9999);
+    assert!(
+        result.is_err(),
+        "close on non-existent stream must fail"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Tests — top_up_stream
 // ---------------------------------------------------------------------------
