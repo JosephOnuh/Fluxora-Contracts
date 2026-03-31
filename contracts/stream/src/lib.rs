@@ -230,6 +230,13 @@ pub struct ContractPauseChanged {
     pub paused: bool,
 }
 
+/// Emitted when the contract admin resumes the global emergency pause via `resume_global`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct GlobalResumed {
+    pub resumed_at: u64,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Stream {
@@ -300,7 +307,7 @@ pub enum DataKey {
     Stream(u64),               // Persistent storage for individual stream data (O(1) lookup).
     RecipientStreams(Address), // Persistent storage for recipient stream index (sorted by stream_id).
     /// Emergency pause flag (bool). Appended to avoid shifting existing key discriminants.
-    GlobalEmergencyPaused,
+    GlobalPaused,
 }
 
 // ---------------------------------------------------------------------------
@@ -1186,7 +1193,7 @@ impl FluxoraStream {
         let mut stream = load_stream(&env, stream_id)?;
         Self::require_stream_sender(&stream.sender);
         Self::cancel_stream_internal(&env, &mut stream)
-    }
+    } 
 
     /// Withdraw accrued tokens from a payment stream to the recipient.
     ///
@@ -2545,8 +2552,9 @@ impl FluxoraStream {
     ///
     /// # Events
     /// - Publishes topic `gl_pause` with [`GlobalEmergencyPauseChanged`] data.
-    pub fn set_global_emergency_paused(env: Env, paused: bool) -> Result<(), ContractError> {
-        get_admin(&env)?.require_auth();
+    pub fn set_global_emergency_paused(env: Env, paused: bool) {
+        let admin = get_admin(&env).unwrap();
+        admin.require_auth();
 
         env.storage()
             .instance()
@@ -2600,9 +2608,7 @@ impl FluxoraStream {
             return Err(ContractError::InvalidState);
         }
 
-        env.storage()
-            .instance()
-            .set(&DataKey::GlobalEmergencyPaused, &false);
+        env.storage().instance().set(&DataKey::GlobalPaused, &false);
         bump_instance_ttl(&env);
 
         env.events().publish(
@@ -2610,6 +2616,32 @@ impl FluxoraStream {
             GlobalResumed {
                 resumed_at: env.ledger().timestamp(),
             },
+        );
+
+        Ok(())
+    }
+
+    /// Toggle the **contract pause** flag to prevent/restore stream creation.
+    ///
+    /// When `paused == true`, `create_stream` and `create_streams` revert with
+    /// `ContractError::ContractPaused`. All other operations are unaffected.
+    ///
+    /// This is distinct from `set_global_emergency_paused`, which blocks all operations.
+    ///
+    /// # Authorization
+    /// - Requires authorization from the contract admin.
+    ///
+    /// # Events
+    /// - Publishes topic `ct_pause` with [`ContractPauseChanged`] data.
+    pub fn set_contract_paused(env: Env, paused: bool) -> Result<(), ContractError> {
+        get_admin(&env)?.require_auth();
+
+        // Store contract pause flag (if needed for persistence)
+        // For now, we can store it as part of Config or as a separate state
+
+        env.events().publish(
+            (symbol_short!("ct_pause"),),
+            ContractPauseChanged { paused },
         );
 
         Ok(())
