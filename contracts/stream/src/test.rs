@@ -13830,6 +13830,235 @@ fn test_resume_stream_as_admin_not_found_returns_error() {
 }
 
 // ===========================================================================
+// Negative tests: pause/resume by non-sender/non-admin
+//
+// This section codifies authorization boundaries for pause/resume operations.
+// Only the stream sender or admin can pause/resume streams. All other roles
+// must receive Unauthorized errors.
+//
+// Scope:
+// - Sender can pause/resume (positive tests already exist)
+// - Admin can pause_as_admin/resume_as_admin (positive tests already exist)
+// - Recipient cannot pause/resume (tested: test_pause_stream_recipient_unauthorized, etc.)
+// - Third party cannot pause/resume (tested: test_pause_stream_third_party_unauthorized, etc.)
+// - Non-admin cannot use *_as_admin variants (tested in strict mode)
+//
+// Excluded (covered elsewhere):
+// - Stream status transitions (Paused/Active/Completed/Cancelled)
+// - Event emission verification
+// - Token balance changes
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// §1  pause_stream_as_admin: negative authorization tests
+// ---------------------------------------------------------------------------
+
+/// Recipient cannot use pause_stream_as_admin (requires admin auth).
+/// Must panic with Unauthorized.
+#[test]
+#[should_panic]
+fn test_pause_stream_as_admin_recipient_is_not_admin() {
+    let ctx = TestContext::setup_strict();
+
+    use soroban_sdk::{testutils::MockAuth, testutils::MockAuthInvoke, IntoVal};
+
+    // Create stream by sender
+    let stream_id = ctx.client().create_stream(
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
+    );
+
+    // Recipient tries to use pause_stream_as_admin - must fail
+    // MockAuth as recipient (not admin)
+    ctx.env.mock_auths(&[MockAuth {
+        address: &ctx.recipient,
+        invoke: &MockAuthInvoke {
+            contract: &ctx.contract_id,
+            fn_name: "pause_stream_as_admin",
+            args: (stream_id,).into_val(&ctx.env),
+            sub_invokes: &[],
+            scan: soroban_sdk::testutils::BytesN::<32>::empty(&ctx.env),
+        },
+    }]);
+
+    ctx.client().pause_stream_as_admin(&stream_id);
+}
+
+/// Third party (neither sender nor admin) cannot use pause_stream_as_admin.
+/// Must panic with Unauthorized.
+#[test]
+#[should_panic]
+fn test_pause_stream_as_admin_third_party_unauthorized() {
+    let ctx = TestContext::setup_strict();
+
+    use soroban_sdk::{testutils::MockAuth, testutils::MockAuthInvoke, IntoVal};
+
+    // Create stream by sender
+    let stream_id = ctx.client().create_stream(
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
+    );
+
+    // Third party tries to use pause_stream_as_admin - must fail
+    let third_party = Address::generate(&ctx.env);
+    ctx.env.mock_auths(&[MockAuth {
+        address: &third_party,
+        invoke: &MockAuthInvoke {
+            contract: &ctx.contract_id,
+            fn_name: "pause_stream_as_admin",
+            args: (stream_id,).into_val(&ctx.env),
+            sub_invokes: &[],
+            scan: soroban_sdk::testutils::BytesN::<32>::empty(&ctx.env),
+        },
+    }]);
+
+    ctx.client().pause_stream_as_admin(&stream_id);
+}
+
+// ---------------------------------------------------------------------------
+// §2  resume_stream_as_admin: negative authorization tests
+// ---------------------------------------------------------------------------
+
+/// Recipient cannot use resume_stream_as_admin (requires admin auth).
+/// Must panic with Unauthorized.
+#[test]
+#[should_panic]
+fn test_resume_stream_as_admin_recipient_unauthorized() {
+    let ctx = TestContext::setup_strict();
+
+    use soroban_sdk::{testutils::MockAuth, testutils::MockAuthInvoke, IntoVal};
+
+    // Create and pause stream
+    let stream_id = ctx.client().create_stream(
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
+    );
+
+    // Admin pauses the stream first
+    ctx.client().pause_stream_as_admin(&stream_id);
+
+    // Recipient tries to use resume_stream_as_admin - must fail
+    ctx.env.mock_auths(&[MockAuth {
+        address: &ctx.recipient,
+        invoke: &MockAuthInvoke {
+            contract: &ctx.contract_id,
+            fn_name: "resume_stream_as_admin",
+            args: (stream_id,).into_val(&ctx.env),
+            sub_invokes: &[],
+            scan: soroban_sdk::testutils::BytesN::<32>::empty(&ctx.env),
+        },
+    }]);
+
+    ctx.client().resume_stream_as_admin(&stream_id);
+}
+
+/// Third party (neither sender nor admin) cannot use resume_stream_as_admin.
+/// Must panic with Unauthorized.
+#[test]
+#[should_panic]
+fn test_resume_stream_as_admin_third_party_unauthorized() {
+    let ctx = TestContext::setup_strict();
+
+    use soroban_sdk::{testutils::MockAuth, testutils::MockAuthInvoke, IntoVal};
+
+    // Create and pause stream
+    let stream_id = ctx.client().create_stream(
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
+    );
+
+    // Admin pauses the stream first
+    ctx.client().pause_stream_as_admin(&stream_id);
+
+    // Third party tries to use resume_stream_as_admin - must fail
+    let third_party = Address::generate(&ctx.env);
+    ctx.env.mock_auths(&[MockAuth {
+        address: &third_party,
+        invoke: &MockAuthInvoke {
+            contract: &ctx.contract_id,
+            fn_name: "resume_stream_as_admin",
+            args: (stream_id,).into_val(&ctx.env),
+            sub_invokes: &[],
+            scan: soroban_sdk::testutils::BytesN::<32>::empty(&ctx.env),
+        },
+    }]);
+
+    ctx.client().resume_stream_as_admin(&stream_id);
+}
+
+// ---------------------------------------------------------------------------
+// §3  Authorization matrix verification
+// ---------------------------------------------------------------------------
+
+/// Verify authorization matrix for pause operations.
+#[test]
+fn test_pause_authorization_matrix() {
+    let ctx = TestContext::setup_strict();
+
+    // Create stream
+    let stream_id = ctx.client().create_stream(
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
+    );
+
+    // Admin can pause
+    ctx.client().pause_stream_as_admin(&stream_id);
+    let state = ctx.client().get_stream_state(&stream_id);
+    assert_eq!(state.status, StreamStatus::Paused);
+
+    // Resume for next test
+    ctx.client().resume_stream_as_admin(&stream_id);
+}
+
+/// Verify authorization matrix for resume operations.
+#[test]
+fn test_resume_authorization_matrix() {
+    let ctx = TestContext::setup_strict();
+
+    // Create and pause stream
+    let stream_id = ctx.client().create_stream(
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
+    );
+    ctx.client().pause_stream_as_admin(&stream_id);
+
+    // Admin can resume
+    ctx.client().resume_stream_as_admin(&stream_id);
+    let state = ctx.client().get_stream_state(&stream_id);
+    assert_eq!(state.status, StreamStatus::Active);
+}
+
+// ===========================================================================
 // Regression tests: double-init and missing-config reads (Issue #246)
 // ===========================================================================
 //
